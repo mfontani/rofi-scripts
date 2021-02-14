@@ -1,0 +1,63 @@
+#!/usr/bin/env perl
+use 5.020_000;
+use warnings;
+use utf8;
+use open qw<:std :utf8>;
+use File::Find qw<find>;
+
+# ~/.config/i3/config:
+# bindsym $mod+Shift+c exec --no-startup-id rofi -modi config:rofi-config -show config
+
+# Which terminal to use?
+my $TERM = 'kitty';
+
+# How to launch a command into it?
+sub launch_term {
+    my @args = map { quotemeta } @_;
+    system(qq!"$TERM" --detach -- @args &!);
+}
+
+# Which editor to use?
+my $EDITOR = $ENV{EDITOR} || 'vim';
+$EDITOR = "$ENV{HOME}/.local/bin/nvim"
+    if -e "$ENV{HOME}/.local/bin/nvim";
+$EDITOR = "$ENV{HOME}/.local/bin/vim"
+    if -e "$ENV{HOME}/.local/bin/vim";
+$EDITOR = "$ENV{HOME}/bin/vim"
+    if -e "$ENV{HOME}/bin/vim";
+
+my $CONFIG_DIR = "$ENV{HOME}/.config";
+die "No such dir: $CONFIG_DIR\n"
+    if !-d $CONFIG_DIR;
+
+my %CONFIGS;
+find({
+    wanted => sub {
+        return
+            if -d $_
+            || $_ !~ m!(?:
+                        config \z
+                    |   [.]conf \z
+                    |\A config
+                    |   [.]ya?ml \z
+                    )!xms;
+        my $basename  = $_;
+        my $full_name = $File::Find::name;
+        return if $full_name =~ m!/[.]git/!xms;
+        my $nice_name = $full_name;
+        $nice_name =~ s!\A\Q$CONFIG_DIR\E/!!xms;
+        $CONFIGS{$nice_name} = $full_name;
+    },
+}, $CONFIG_DIR);
+
+if (!@ARGV) {
+    say join "\t", $_, $CONFIGS{$_} for sort keys %CONFIGS;
+    exit 0;
+}
+die "Too many args!\n" if scalar @ARGV > 1;
+
+my ($nice, $full, @rest) = split /\t/xms, $ARGV[0];
+die "Too many tab-separated things!\n" if scalar @rest;
+die "Bad nice='$nice' full='$full' not in $CONFIG_DIR\n"
+    if "$CONFIG_DIR/$nice" ne $full;
+launch_term($EDITOR, $full);

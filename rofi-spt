@@ -1,0 +1,135 @@
+#!/usr/bin/env perl
+use 5.020_000;
+use warnings;
+use utf8;
+use open qw<:std :utf8>;
+use Mojo::URL qw<>;
+
+# ~/.config/i3/config:
+# bindsym $mod+Control+Shift+s exec --no-startup-id rofi -modi spt:rofi-spt -show spt
+
+# How to call "spt"?
+my $SPT = 'spt';
+
+# Which browser to open lyrics search with?
+my $BROWSER = 'qutebrowser';
+
+sub spt {
+    my ($sync, @args) = @_;
+    # DWIM --device ...
+    if (!$sync) {
+        my $has_playback = scalar grep { $_ eq 'playback' } @args;
+        my $has_device   = scalar grep { $_ eq '--device' } @args;
+        if ($has_playback && !$has_device) {
+            my $device = spt(1, 'playback', '--format', '%d');
+            my @new_args;
+            for (@args) {
+                push @new_args, $_;
+                push @new_args, '--device', $device
+                    if $_ eq 'playback';
+            }
+            @args = @new_args;
+        }
+    }
+    $_ = "\Q$_\E" for @args;
+    if ($sync) {
+        my $output = qx!"$SPT" @args!; ## no critic (InputOutput::ProhibitBacktickOperators)
+        chomp $output;
+        return $output;
+    }
+    exec "$SPT @args >/dev/null"
+        or die "Cannot exec $SPT @args: $!\n";
+}
+
+# # On LEFT click, play/pause
+# if ($ENV{BLOCK_BUTTON} && $ENV{BLOCK_BUTTON} eq '1') {
+#     local $ENV{BLOCK_BUTTON} = undef;
+#     spt(0, qw<playback --toggle>);
+# }
+# # On RIGHT click, like the current song
+# if ($ENV{BLOCK_BUTTON} && $ENV{BLOCK_BUTTON} eq '3') {
+#     local $ENV{BLOCK_BUTTON} = undef;
+#     spt(0, qw<playback --like>);
+# }
+
+my %COMMANDS = (
+    '#' => {
+        desc => sub {
+            spt(1, 'playback', '--format', "♫:%t\tﴁ:%a\t:%b");
+        },
+    },
+    '##' => {
+        desc => sub {
+            spt(1, 'playback', '--format', "%s\t%d\t%v\t%f");
+        },
+    },
+    N => {
+        desc => 'Next song',
+        args => [ qw<playback --next> ],
+    },
+    P => {
+        desc => 'Start song again',
+        args => [ qw<playback --previous> ],
+    },
+    PP => {
+        desc => 'Previous song',
+        args => [ qw<playback --previous --previous> ],
+    },
+    S => {
+        desc => 'Toggle shuffle mode',
+        args => [ qw<playback --shuffle> ],
+    },
+    R => {
+        desc => 'Toggle repeat mode',
+        args => [ qw<playback --repeat> ],
+    },
+    L => {
+        desc => 'Find lyrics',
+        exec => sub {
+            my $artist = spt(1, 'playback', '--format', '%a');
+            my $song   = spt(1, 'playback', '--format', '%t');
+            my $url = Mojo::URL->new;
+            $url->scheme('https');
+            $url->host('duckduckgo.com');
+            $url->path('/');
+            $url->query(
+                q => sprintf 'lyrics "%s" "%s"', $artist, $song,
+            );
+            # I'd rather using system() instead of this song and dance, as
+            # "i3-msg exec" does what I need but it also spits out useless
+            # JSON once it's started, and redirecting STDOUT away is a bit
+            # of a PITA with system(). qx it is, then.
+            qx!i3-msg exec "$BROWSER" "\Q$url\E" >/dev/null!;
+            exit 0;
+        },
+    },
+    p => {
+        desc => 'Toggle playback (start/stop)',
+        args => [ qw<playback --toggle> ],
+    },
+    l => {
+        desc => 'Toggle like for current song',
+        args => [ qw<playback --like> ],
+    },
+);
+
+if (!@ARGV) {
+    for my $key (sort keys %COMMANDS) {
+        my $desc = !defined $COMMANDS{$key}{desc}       ? 'No description given :/'
+                 : !ref $COMMANDS{$key}{desc}           ? $COMMANDS{$key}{desc}
+                 :  ref $COMMANDS{$key}{desc} eq 'CODE' ? $COMMANDS{$key}{desc}->()
+                 : 'ERROR: Cannot handle desc=' . ref $COMMANDS{$key}{desc};
+        say sprintf '%-2s %s', $key, $desc;
+    }
+    exit 0;
+}
+die "Too many args!\n" if @ARGV > 1;
+
+my ($cmd, @args) = split /\s+/xms, $ARGV[0];
+if (exists $COMMANDS{$cmd} && $COMMANDS{$cmd}{exec}) {
+    $COMMANDS{$cmd}{exec}->();
+}
+if (exists $COMMANDS{$cmd} && $COMMANDS{$cmd}{args}) {
+    spt(0, @{ $COMMANDS{$cmd}{args} });
+}
+die "Unknown cmd '$cmd'!\n";

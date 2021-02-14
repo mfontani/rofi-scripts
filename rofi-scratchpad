@@ -1,0 +1,51 @@
+#!/usr/bin/env perl
+use 5.020_000;
+use warnings;
+use Cpanel::JSON::XS qw<>;
+use utf8;
+use open qw<:std :encoding(UTF8)>;
+
+if ($ENV{BLOCK_BUTTON} && $ENV{BLOCK_BUTTON} eq '1') {
+    local $ENV{BLOCK_BUTTON} = undef;
+    exec qw<rofi -modi scratchpad:rofi-scratchpad -show scratchpad>
+        or die "Cannot exec: $!";
+}
+
+my @in_scratchpad = all_in_scratchpad();
+if (!@ARGV) {
+    # "window_properties":{"instance":"xcalc","class":"XCalc","title":"Calculator"
+    say "$_->{window} “$_->{name}” I:“$_->{window_properties}{instance}” C:“$_->{window_properties}{class}” T:“$_->{window_properties}{title}”"
+        for @in_scratchpad;
+}
+elsif ($ARGV[0] eq '--i3blocks') {
+    say scalar @in_scratchpad;
+}
+else {
+    my ($window_id) = $ARGV[0];
+    $window_id =~ s!\A\s*!!xms;
+    ($window_id) = split /\s+/, $window_id;
+    my ($entry) = grep { $_->{window} eq $window_id } @in_scratchpad;
+    if ($entry) {
+        qx!i3-msg [id="\Q$entry->{window}\E"] scratchpad show >/dev/null!;
+    }
+}
+
+sub all_in_scratchpad {
+    my $tree = Cpanel::JSON::XS->new->decode(qx!i3-msg -t get_tree!);
+    # $ i3-msg -t get_tree | \
+    #   jq '.nodes[] | .nodes[] | .nodes[] | select(.name=="__i3_scratch") | .floating_nodes[] | .nodes[] | [.window,.name]'
+    my @in_scratchpad;
+    for (@{ $tree->{nodes} // [] }) {
+        for (@{ $_->{nodes} // [] }) {
+            for (@{ $_->{nodes} // [] }) {
+                next if $_->{name} ne '__i3_scratch';
+                for (@{ $_->{floating_nodes} // [] }) {
+                    for (@{ $_->{nodes} // [] }) {
+                        push @in_scratchpad, $_;
+                    }
+                }
+            }
+        }
+    }
+    return @in_scratchpad;
+}

@@ -1,0 +1,5 @@
+#!/bin/bash
+
+echo "rofi-run $*" >> "$HOME/.log"
+
+i3 exec "$@"

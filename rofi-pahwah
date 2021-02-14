@@ -1,0 +1,61 @@
+#!/bin/bash
+
+ACT_RLOW_BACKLIGHT='REALLY LOW Backlight (0.1)'
+ACT_LOW_BACKLIGHT='Low Backlight (4)'
+ACT_MID_BACKLIGHT='Mid Backlight (6)'
+ACT_PWR_AUTOTUNE='PowerTop AutoTune'
+ACT_ON_BATTERY='Full On Battery (4 + AutoTune)'
+ACT_KILL_LED='Kill power LED'
+
+if [[ -z "$*" ]]; then
+    echo "$ACT_RLOW_BACKLIGHT"
+    echo "$ACT_ON_BATTERY"
+    echo "$ACT_LOW_BACKLIGHT"
+    echo "$ACT_MID_BACKLIGHT"
+    echo "$ACT_PWR_AUTOTUNE"
+    echo "$ACT_KILL_LED"
+    exit 0
+fi
+
+function backlight_really_low () {
+    backlight -S 0.1
+    backlightstatus low
+}
+
+function backlight_low () {
+    backlight -S 4
+    backlightstatus low
+}
+
+function backlight_mid () {
+    backlight -S 6
+    backlightstatus mid
+}
+
+function powertop_autotune () {
+    notify-send -t 1000 -i battery -a rofi-pahwah rofi-pahwah "Auto-tuning..."
+    sudo powertop --auto-tune >/dev/null 2>&1
+    notify-send -t 1000 -i battery -a rofi-pahwah rofi-pahwah "Auto-tuned"
+}
+
+trap "" HUP
+
+if [[ "$1" == "$ACT_ON_BATTERY" ]]; then
+    backlight_low &
+    powertop_autotune >/dev/null 2>&1 &
+    sudo su -c 'echo "0 off" > /proc/acpi/ibm/led'
+elif [[ "$1" == "$ACT_LOW_BACKLIGHT" ]]; then
+    backlight_low &
+elif [[ "$1" == "$ACT_RLOW_BACKLIGHT" ]]; then
+    backlight_really_low &
+elif [[ "$1" == "$ACT_MID_BACKLIGHT" ]]; then
+    backlight_mid &
+elif [[ "$1" == "$ACT_PWR_AUTOTUNE" ]]; then
+    powertop_autotune >/dev/null 2>&1 &
+elif [[ "$1" == "$ACT_KILL_LED" ]]; then
+    sudo su -c 'echo "0 off" > /proc/acpi/ibm/led'
+else
+    notify-send -a rofi-pahwah rofi-pahwah "Bad option $1" >/dev/null 2>&1 &
+    exit 1
+fi
+sudo service upower restart

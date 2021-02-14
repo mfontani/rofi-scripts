@@ -1,0 +1,62 @@
+#!/bin/bash
+
+export DISPLAY=:0
+LAYOUTDIR="$HOME/.screenlayout"
+SCREENLOG="$HOME/.screen-log"
+
+if [[ -z "$*" ]]; then
+    cd "$LAYOUTDIR" || exit 1
+    LAST_LAYOUT="$( grep "$LAYOUTDIR" "$SCREENLOG" | tail -n 1 | perl -lnE's,\A.*/,,;print' )"
+    # >&2 echo "Last layout: '$LAST_LAYOUT'"
+    # Ensure the first layout isn't the current one.
+    find . -type f -maxdepth 1 -printf '%P\n' | sort | perl -E'
+        my $last_layout = shift @ARGV;
+        my @layouts;
+        while (my $layout = <>) {
+            chomp $layout;
+            push @layouts, $layout;
+        }
+        ($layouts[0], $layouts[1]) = ($layouts[1], $layouts[0])
+            if defined $last_layout
+            && length $last_layout
+            && $last_layout eq $layouts[0];
+        say for @layouts;
+    ' "$LAST_LAYOUT"
+    exit 0
+fi
+
+trap "" HUP
+
+if [[ -f "$LAYOUTDIR/$1" ]]; then
+    {
+        {
+            date
+            echo "$LAYOUTDIR/$1"
+            bash "$LAYOUTDIR/$1" 2>&1
+        } >> "$SCREENLOG"
+        # Refresh screens' backgrounds
+        # {
+        #     DISPLAY=:0 nitrogen --random --set-zoom-fill --save --head=0
+        #     DISPLAY=:0 nitrogen --random --set-zoom-fill --save --head=1
+        # } >/dev/null 2>&1
+        # {
+        #     DISPLAY=:0 nitrogen --restore --head=0
+        #     DISPLAY=:0 nitrogen --restore --head=1
+        # } >/dev/null 2>&1
+        # /usr/bin/feh --bg-fill "$HOME/Pictures/4k/4kmoon_d1aehdnbq0h21.jpg"
+        # Refresh screens' background using my method.
+        if [[ -x "$HOME/.local/bin/mfbgimage" ]]; then
+            "$HOME/.local/bin/mfbgimage"
+        fi
+        # Ensure dunst is killed after the screen layout has changed, so the
+        # location of the notification will be correct after the screen change.
+        killall dunst
+        sleep 1
+        # Notify we've changed the layout
+        notify-send -i xscreensaver -u low -t 2000 -a 'rofi-screenlayout' "$@"
+    } &
+    exit 0
+fi
+
+>&2 echo "Nothing to do."
+exit 1

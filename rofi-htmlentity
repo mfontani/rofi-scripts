@@ -1,0 +1,40 @@
+#!/usr/bin/env perl
+use 5.020_000;
+use warnings;
+use open qw<:std :utf8>;
+
+# Use with:
+# bindsym $mod+Shift+u exec --no-startup-id rofi -modi htmlentitiespick:rofi-htmlentity -show htmlentitiespick
+
+if (!@ARGV) {
+    show_all_entities();
+    exit 0;
+}
+
+my ($name, $code) = split /\s*:/, $ARGV[0];
+qx!echo -n "$code" | DISPLAY=:0 xsel -b -i!;
+exit 0;
+
+sub show_all_entities {
+    require HTML::Entities;
+    require HTML::HTML5::Entities;
+    no warnings 'once';
+    my %done;
+    for my $k (sort keys %HTML::Entities::entity2char) {
+        my $ent = $k; $ent =~ s!;\z!!xms;
+        printf "[html name] %-20s :%s\n", "&$ent;", $HTML::Entities::entity2char{$k};
+        $done{$ent}++;
+    }
+    for my $k (sort keys %HTML::HTML5::Entities::entity2char) {
+        my $ent = $k; $ent =~ s!;\z!!xms;
+        next if $done{$ent};
+        printf "[html5 name] %-20s :%s\n", "&$ent;", $HTML::HTML5::Entities::entity2char{$k};
+    }
+    my $ent;
+    for my $n (1..90000) {
+        $ent = sprintf '&#%d;', $n;
+        printf "[html dec number] %-20s :%s\n", $ent, HTML::Entities::decode_entities($ent);
+        $ent = sprintf '&#x%x;', $n;
+        printf "[html hex number] %-20s :%s\n", $ent, HTML::Entities::decode_entities($ent);
+    }
+}

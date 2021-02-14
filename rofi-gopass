@@ -1,0 +1,23 @@
+#!/bin/bash
+
+set -e
+set -o pipefail
+
+# "for some reason" this doesn't work as:
+# bindsym $mod+Shift+g exec --no-startup-id rofi -modi gopass:rofi-gopass -show gopass
+# Rather, I have to add it as:
+# bindsym $mod+Shift+g exec /home/marco/go/bin/gopass ls --flat | rofi -dmenu -p gopass | xargs --no-run-if-empty /home/marco/go/bin/gopass show -f | head -n 1 | xsel --clipboard --input --selectionTimeout 20000
+# I'm keeping the script "separate", just remind myself how it's composed.
+
+# When ran from i3, ~/go/bin isn't yet in $PATH
+gopass="$HOME/go/bin/gopass"
+if [[ ! -f "$gopass" ]]; then
+    >&2 echo "Cannot find $gopass"
+    exit 1
+fi
+
+"$gopass" ls --flat | \
+    rofi -dmenu -p gopass | \
+    xargs --no-run-if-empty "$gopass" show -f | \
+    head -n 1 | \
+    xsel --clipboard --input --selectionTimeout 20000

@@ -1,0 +1,133 @@
+#!/usr/bin/env perl
+use 5.020_000;
+use warnings;
+use utf8;
+use open qw<:std :utf8>;
+use Path::Tiny qw<path>;
+
+# FIXME this isn't yet complete.
+
+# bindsym $mod+Shift+s exec --no-startup-id rofi -modi sshuttle:rofi-sshuttle -show sshuttle
+if (!@ARGV) {
+    show_running();
+    show_all_sshuttles();
+}
+elsif (scalar @ARGV == 1 && $ARGV[0] eq '--i3blocks') {
+    run_as_i3block();
+}
+elsif (scalar @ARGV == 1) {
+    if ($ARGV[0] =~ m!\AKILL[ ]SSHUTTLE!xms) {
+        kill_running_sshuttle();
+    }
+    elsif ($ARGV[0] =~ m!\ASSHUTTLE[ ](\S+)!xms) {
+        run_sshuttle($ARGV[0]);
+    }
+    else {
+        die "Don't know what to do with $ARGV[0]";
+    }
+}
+else {
+    die "Don't know what to do with @ARGV";
+}
+exit 0;
+
+sub show_running {
+    my @running = map { chomp; $_ } qx<pgrep -a sshuttle>;
+    return if !scalar @running;
+    if (scalar @running > 1) {
+        say 'ERROR: TOO MANY RUNNING:';
+        say "RUNNING: $_" for @running;
+        return;
+    }
+    # 1851 /usr/bin/python3 /usr/bin/sshuttle --dns -r raspi -x 512.982.280.0/12 0/0
+    my $rx_sshuttle = qr{
+        \A
+        (?:\d+)
+        [ ]
+        /usr/bin/python[32]?
+        [ ]
+        /usr/bin/sshuttle
+        [ ]
+        (?: --dns [ ])?
+        -r[ ](\w+)
+        (?:
+            [ ]-x[ ]\S+
+            (?:
+                [ ]\S+
+            )?
+        )?
+        \z
+    }xms;
+    if ($running[0] =~ $rx_sshuttle) {
+        say "KILL RUNNING $1 -- $running[0]";
+        return;
+    }
+    say "ERROR: DID NOT MATCH: $running[0]";
+}
+
+sub allowable_sshuttles {
+    my $rx_sshuttlable = qr{
+        \A host \s+ (\S+) \s+ [#] \s sshuttle\z
+    }xmsi;
+    my @sshuttlable =
+        grep { defined }
+        map { $_ =~ $rx_sshuttlable ? $1 : undef }
+        path("$ENV{HOME}/.ssh/config")->lines_utf8({ chomp => 1 });
+    return @sshuttlable;
+}
+
+sub show_all_sshuttles {
+    # I mark all the sshuttle-able hosts in ~/.ssh/config
+    # with a "# sshuttle" comment at EOL.
+    my @sshuttlable = allowable_sshuttles();
+    say "ERROR: no 'Host foo # sshuttle' in $ENV{HOME}/.ssh/config"
+        if !scalar @sshuttlable;
+    say "SSHUTTLE $_" for sort @sshuttlable;
+}
+
+sub run_sshuttle {
+    my ($which) = @_;
+    my %sshuttlable = map { $_ => 1 } allowable_sshuttles();
+    if (!exists $sshuttlable{$which}) {
+        say "'$which' cannot be used!";
+        return;
+    }
+    qx!tmux-sshuttle "$which" &!;
+}
+
+sub run_as_i3block {
+    if ($ENV{BLOCK_BUTTON} && $ENV{BLOCK_BUTTON} eq '1') {
+        run_yourself();
+    }
+    if ($ENV{BLOCK_BUTTON} && $ENV{BLOCK_BUTTON} eq '3') {
+        kill_running_sshuttle();
+    }
+    my ($used, $live, $dead) = _find_all_agents();
+    my $nloaded = scalar @$used;
+    my $nlive   = scalar @$live;
+    my $ndead   = scalar @$dead;
+    if (!$nloaded && !$nlive) {
+        say sprintf '💤%dD', $ndead;
+        say sprintf '%dD',   $ndead;
+    }
+    elsif (!$nlive) {
+        say sprintf '%dL %dD', $nloaded, $ndead;
+        say sprintf '%dL%dD',  $nloaded, $ndead;
+    }
+    else {
+        say sprintf '%d(%d)L %dD', $nloaded, $nlive, $ndead;
+        say sprintf '%dL%dD',      $nloaded, $ndead;
+    }
+    if ($nloaded) {
+        if ($nlive) {
+            say '#FFAA00'
+        }
+        else {
+            say '#55aa00'
+        }
+    }
+}
+
+sub run_yourself {
+    system 'rofi -modi sshuttle:rofi-sshuttle -show sshuttle';
+}

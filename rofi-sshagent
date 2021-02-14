@@ -1,0 +1,262 @@
+#!/usr/bin/env perl
+use 5.020_000;
+use warnings;
+use utf8;
+use open qw<:std :utf8>;
+use Path::Tiny qw<path>;
+
+# bindsym $mod+s exec --no-startup-id rofi -modi sshagent:rofi-sshagent -show sshagent
+
+my $AGENT_DIR    = "$ENV{HOME}/.ssh/agents";
+my $AGENT_PREFIX = 'agent-'; # agent-foo
+
+if (!@ARGV) {
+    show_all_agents();
+}
+elsif (scalar @ARGV == 1 && $ARGV[0] eq '--i3blocks') {
+    run_as_i3block();
+}
+elsif (scalar @ARGV == 1) {
+    if ($ARGV[0] eq 'KILL THEM ALL') {
+        kill_all_agents();
+    }
+    elsif ($ARGV[0] eq 'CLEAN UP STALE') {
+        clean_up_agents();
+    }
+    else {
+        kill_agent($ARGV[0]);
+    }
+}
+else {
+    die "Don't know what to do with @ARGV";
+}
+exit 0;
+
+sub _find_all_agents {
+    my @used;
+    my @live;
+    my @dead;
+    for my $agent_file (glob "$AGENT_DIR/$AGENT_PREFIX*") {
+        my $entry = parse_agent_file($agent_file);
+        if (defined $entry) {
+            if (scalar $entry->[2]) {
+                push @used, $entry;
+            }
+            else {
+                push @live, $entry;
+            }
+        }
+        else {
+            push @dead, [ path($agent_file)->basename, 'NOT RUNNING' ];
+        }
+    }
+    return (\@used, \@live, \@dead);
+}
+
+sub to_ps_time {
+    state $mmmdd = qr!\A(\w\w\w)( \d\d )?\z!xms;
+    state $yyyy  = qr!\A( \d\d\d\d )\z!xms;
+    state $hhmm  = qr!\A(\d\d):(\d\d)\z!xms;
+    state %MONTHS = (
+        Jan => 1,
+        Feb => 2,
+        Mar => 3,
+        Apr => 4,
+        May => 5,
+        Jun => 6,
+        Jul => 7,
+        Aug => 8,
+        Sep => 9,
+        Oct => 10,
+        Nov => 11,
+        Dec => 12,
+    );
+    my $year   = 9999;
+    my $month  = 99;
+    my $day    = 99;
+    my $hour   = 99;
+    my $minute = 99;
+    if ($_ =~ $mmmdd) {
+        ($month, $day) = ($1, $2);
+        $day //= 99;
+    }
+    elsif ($_ =~ $yyyy) {
+        $year = $1;
+    }
+    elsif ($_ =~ $hhmm) {
+        ($hour, $minute) = ($1, $2);
+    }
+    $month = $MONTHS{$month} // 99;
+    return [
+        $year,      # 0
+        $month,     # 1
+        $day,       # 2
+        $hour,      # 3
+        $minute,    # 4
+    ];
+}
+
+sub show_all_agents {
+    my ($used, $live, $dead) = _find_all_agents();
+    # 2017 before Nov07 before Nov14 before 11:30
+    @$used = map { $_->[0] }
+             reverse
+             sort {
+                $a->[1][0] <=> $b->[1]->[0] ||
+                $a->[1][1] <=> $b->[1]->[1] ||
+                $a->[1][2] <=> $b->[1]->[2] ||
+                $a->[1][3] <=> $b->[1]->[3] ||
+                $a->[1][4] <=> $b->[1]->[4] ||
+                $a->[0] cmp $b->[0]
+             }
+             map { [ $_, to_ps_time($_->[3]) ] }
+             @$used;
+    my $maxlen = 0;
+    for my $agent (@$live, @$used, @$dead) {
+        $maxlen = length$agent->[0]
+            if length $agent->[0] > $maxlen;
+    }
+    my $fmt = "%-${maxlen}s %s";
+    for my $agent (@$used, @$live, @$dead) {
+        say sprintf $fmt, $agent->[0], $agent->[1];
+    }
+    say 'KILL THEM ALL';
+    say 'CLEAN UP STALE';
+}
+
+sub clean_up_agents {
+    my ($used, $live, $dead) = _find_all_agents();
+    for my $agent (@$live) {
+        kill_agent("@$agent", 1);
+    }
+    exit 0;
+}
+
+sub kill_all_agents {
+    system 'pkill -9 ssh-agent';
+}
+
+sub kill_agent {
+    my ($what, $and_return) = @_;
+
+    if ($what =~ m!NOT[ ]RUNNING\z!xms) {
+        return if $and_return;
+        exit 0;
+    }
+    # agent-bbucket-zaphod           20349 marco (Aug19) (none)
+    # agent-github-zaphod            NOT RUNNING
+    my ($basename, $pid, $user, @rest) = split /\s+/xms, $what;
+    die "Too few args: @_"
+        if !defined $basename
+        || !defined $pid
+        || !defined $user;
+    exit 0
+        if $pid  eq 'NOT'
+        && $user eq 'RUNNING';
+    # Does $basename exist in $AGENT_DIR, and does it start with $AGENT_PREFIX?
+    die "Bad basename '$basename' not in $AGENT_PREFIX/$basename"
+        if $basename !~ m!\A\Q$AGENT_PREFIX\E!xms
+        || !-e "$AGENT_DIR/$basename";
+    my ($entry) = parse_agent_file("$AGENT_DIR/$basename");
+    die "Bad agent_file $basename"
+        if !$entry;
+    my ($running) = ssh_agents_running($pid);
+    die "$basename/$pid NOT RUNNING"
+        if !$running;
+    # It's reasonable to conclude that the $pid refers to a good agent. Kill.
+    kill 'TERM', $pid
+        or die "Couldn't kill $pid: $!";
+    # say "Killed agent for $basename ($pid)";
+    return if $and_return;
+    exit 0;
+}
+
+sub ssh_agents_running {
+    my ($pid) = @_;
+    state $running = do {
+        my @pid_lines = grep { m!ssh[-]agent\z!xms } map { chomp; $_ } qx!ps auxww!;
+        my %running;
+        for my $line (@pid_lines) {
+            # 0        1      2    3     4      5   6        7    8       9    10
+            # marco    12136  0.0  0.0   5856   488 ?        Ss   Aug19   0:00 ssh-agent
+            my @args = split /\s+/xms, $line;
+            my ($user, $pid, $when) = @args[0,1,8];
+            $running{$pid} = "$pid $user ($when)";
+        }
+        \%running;
+    };
+    return $running->{$pid}
+        if $pid;
+    $running;
+}
+
+sub parse_agent_file {
+    my ($agent_file) = @_;
+    my $file    = path($agent_file);
+    my $running = ssh_agents_running();
+    # SSH_AUTH_SOCK=/tmp/ssh-Jb2VRkW5lWri/agent.20348; export SSH_AUTH_SOCK;
+    # SSH_AGENT_PID=20349; export SSH_AGENT_PID;
+    # echo Agent pid 20349;
+    my @lines = $file->lines_utf8({ chomp => 1 });
+    if ($lines[0] =~ m!\ASSH_AUTH_SOCK=([^;]+);[ ]export[ ]SSH_AUTH_SOCK;\z!xms) {
+        my $sock = $1;
+        if ($lines[1] =~ m!\ASSH_AGENT_PID=(\d+);[ ]export[ ]SSH_AGENT_PID;\z!xms) {
+            my $pid = $1;
+            if (exists $running->{$pid} && -e $sock && -S $sock) {
+                # The associated thing is running, and the file's a socket.
+                # Does it have any keys "in it"?
+                my @keys = qx!SSH_AUTH_SOCK=$sock SSH_AGENT_PID=$pid ssh-add -L!;
+                chomp @keys;
+                # Keys are in the format:
+                # ssh-ed25519 AAAA.... foo@bar.com
+                my @identities;
+                for my $key (@keys) {
+                    next if $key eq 'The agent has no identities.';
+                    my ($type, $sig, $comment) = split /\s+/xms, $key;
+                    push @identities, "$comment ($type)";
+                }
+                my $ids = @identities ? join ', ', @identities : '(none)';
+                # When was it started?
+                # PID username (HH:MM)
+                my ($when) = $running->{$pid} =~ m!\((\d{2}:\d{2})\)!xms;
+                return [ $file->basename, "$running->{$pid} $ids", scalar @identities, $when ];
+            }
+        }
+    }
+    return undef; ## no critic (Subroutines::ProhibitExplicitReturnUndef)
+}
+
+sub run_as_i3block {
+    if ($ENV{BLOCK_BUTTON} && $ENV{BLOCK_BUTTON} eq '1') {
+        local $ENV{BLOCK_BUTTON} = undef;
+        run_yourself();
+    }
+    my ($used, $live, $dead) = _find_all_agents();
+    my $nloaded = scalar @$used;
+    my $nlive   = scalar @$live;
+    my $ndead   = scalar @$dead;
+    if (!$nloaded && !$nlive) {
+        say sprintf '💤%dD', $ndead;
+        say         '💤';
+    }
+    elsif (!$nlive) {
+        say sprintf '%dL/%dD', $nloaded, $ndead;
+        say sprintf '%dL',     $nloaded;
+    }
+    else {
+        say sprintf '%d(%d)L/%dD', $nloaded, $nlive, $ndead;
+        say sprintf '%dL',         $nloaded;
+    }
+    if ($nloaded) {
+        if ($nlive) {
+            say '#FFAA00'
+        }
+        else {
+            say '#55aa00'
+        }
+    }
+}
+
+sub run_yourself {
+    system 'rofi -modi sshagent:rofi-sshagent -show sshagent';
+}

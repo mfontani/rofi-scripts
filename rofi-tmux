@@ -1,0 +1,96 @@
+#!/usr/bin/env perl
+use 5.020_000;
+use warnings;
+use utf8;
+use open qw<:std :utf8>;
+
+# What terminal do you want to execute when attaching the tmux session?
+my $PREFERRED_TERMINAL = 'kitty';
+
+# ~/.config/i3/config:
+# bindsym $mod+t exec --no-startup-id rofi -modi tmux:rofi-tmux -show tmux
+# ~/.config/i3blocks/config:
+# [tmux]
+# command=$HOME/.local/bin/rofi-tmux --i3blocks
+# label=T:
+
+# On click, show the rofi-based picker. Nice to have.
+if ($ENV{BLOCK_BUTTON} && $ENV{BLOCK_BUTTON} eq '1') {
+    # Clear the triggering environment variable before exec'ing!
+    local $ENV{BLOCK_BUTTON} = undef;
+    exec qw<rofi -modi tmux:rofi-tmux -show tmux>
+        or die "Cannot exec: $!";
+}
+
+if (!@ARGV) {
+    # Show all sessions, neatly formatted.
+    my @sessions = get_all_sessions();
+    my $name_sprintf = do {
+        my $max_length_name = 1;
+        for (@sessions) {
+            $max_length_name = length $_->{name}
+                if length $_->{name} > $max_length_name;
+        }
+        "%-${max_length_name}s";
+    };
+    my $n_sprintf = do {
+        my $max_length_n = 1;
+        for (@sessions) {
+            $max_length_n = length $_->{windows}
+                if length $_->{windows} > $max_length_n;
+        }
+        "%-${max_length_n}s";
+    };
+    for my $session (@sessions) {
+        say sprintf "$name_sprintf %-8s $n_sprintf %s",
+            $session->{name},
+            $session->{attached},
+            $session->{windows},
+            scalar localtime $session->{last_attached},
+    }
+}
+elsif (scalar @ARGV == 1 && $ARGV[0] eq '--i3blocks') {
+    # Show count of total sessions, and total "attached" sessions.
+    my @sessions = get_all_sessions();
+    my $total = scalar @sessions;
+    my $attached = scalar grep { $_->{attached} } @sessions;
+    # 19/4 for "19 sessions, of which 4 attached"
+    say sprintf '%d/%d', $total, $attached;
+}
+elsif (scalar @ARGV == 1) {
+    # If given a session, try attaching to it in a new terminal.
+    attach_to_session(split /\s/xms, $ARGV[0]);
+}
+else {
+    die "Don't know what to do with @ARGV";
+}
+exit 0;
+
+sub get_all_sessions {
+    my @lines = qx!tmux list-sessions -F '#{session_name} #{session_attached} #{session_windows} #{session_activity} #{session_last_attached}'!;
+    chomp @lines;
+    my @sessions;
+    for my $line (@lines) {
+        my ($session_name, $session_attached, $session_windows, $session_activity, $session_last_attached) = split /\s+/xms, $line;
+        push @sessions, {
+            name          => $session_name,
+            attached      => $session_attached ? 'attached' : '',
+            windows       => $session_windows,
+            activity      => $session_activity,
+            last_attached => $session_last_attached,
+        };
+    }
+    @sessions = sort {
+        # By attached currently
+        $b->{attached} cmp $a->{attached}
+        ||
+        # or by last attached
+        $b->{last_attached} <=> $a->{last_attached}
+    } @sessions;
+    return @sessions;
+}
+
+sub attach_to_session {
+    my ($session_name) = @_;
+    system(qq!"$PREFERRED_TERMINAL" --detach -- tmux -2u at -t "\Q$session_name\E" &!);
+}
