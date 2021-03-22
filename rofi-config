@@ -38,6 +38,7 @@ find({
             || $_ !~ m!(?:
                         config \z
                     |   [.]conf \z
+                    |   rc \z
                     |\A config
                     |   [.]ya?ml \z
                     )!xms;
