@@ -54,8 +54,8 @@ elsif (scalar @ARGV == 1 && $ARGV[0] eq '--i3blocks') {
     my @sessions = get_all_sessions();
     my $total = scalar @sessions;
     my $attached = scalar grep { $_->{attached} } @sessions;
-    # 19/4 for "19 sessions, of which 4 attached"
-    say sprintf '%d/%d', $total, $attached;
+    # 4/19 "19 sessions, of which 4 attached"
+    say sprintf '%d/%d', $attached, $total;
 }
 elsif (scalar @ARGV == 1) {
     # If given a session, try attaching to it in a new terminal.
