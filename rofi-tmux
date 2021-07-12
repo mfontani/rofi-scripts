@@ -82,7 +82,7 @@ sub get_all_sessions {
     }
     @sessions = sort {
         # By attached currently
-        $b->{attached} cmp $a->{attached}
+        $a->{attached} cmp $b->{attached}
         ||
         # or by last attached
         $b->{last_attached} <=> $a->{last_attached}
